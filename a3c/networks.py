@@ -2,6 +2,8 @@ import tensorflow as tf
 from tensorflow.contrib import rnn
 from tensorflow.contrib import slim
 
+from .utils import to_list
+
 
 class Rnn(object):
 
@@ -13,13 +15,16 @@ class Rnn(object):
         self.init_state = tf.placeholder(shape=(None, self.nb_unit),
                                          dtype=tf.float32)
         self.cell = self.cell_class(self.nb_unit)
-        self.outputs, self.states = rnn.static_rnn(
-            tf.unpack(inputs), self.cell, initial_state=self.init_state)
+        self.outputs, self.states = tf.nn.dynamic_rnn(
+            self.cell, inputs, initial_state=self.init_state)
 
 
 class Network(object):
 
-    def __init__(self, state, nb_action, rnn, prepro_state=None):
+    def __init__(self, state, nb_action, rnn, optimizer,
+                 prepro_state=None,
+                 max_grad_norm=5,
+                 ):
         self.state = state
         if prepro_state is None:
             self.prepro_state = self.state
@@ -27,30 +32,64 @@ class Network(object):
             self.prepro_state = prepro_state
         self.nb_action = nb_action
         self.rnn = rnn
+        self.optimizer = optimizer
+        self.max_grad_norm = max_grad_norm
+
         self._build()
 
     def _build_stem(self):
         pass
 
+    def _build_objective(self):
+        self.action = tf.placeholder(shape=[None], dtype=tf.int32)
+        self.advantage = tf.placeholder(shape=[None], dtype=tf.float32)
+        self.target_value = tf.placeholder(shape=[None], dtype=tf.float32)
+
+        action_onehot = tf.one_hot(self.action, self.nb_action)
+        self.action_selected = tf.reduce_sum(
+            self.action_dist * action_onehot, axis=1)
+        # log(pi(q|s)) * (R - V(s))
+        self.action_loss = -tf.reduce_mean(
+            tf.log(self.action_selected) * self.advantage)
+        self.entropy = -tf.reduce_mean(tf.reduce_sum(
+            self.action_dist * tf.log(self.action_dist), axis=1))
+        # (R - V(s))**2
+        self.value_loss = tf.reduce_mean(
+            tf.squared_difference(self.target_value, tf.squeeze(self.value)))
+        self.loss = self.action_loss + 0.5 * self.value_loss - \
+            0.01 * self.entropy
+        self.gradients = tf.gradients(
+            self.loss, self.trainable_variables)
+        if self.max_grad_norm:
+            self.gradients, self.global_gradient_norm = \
+                tf.clip_by_global_norm(self.gradients, self.max_grad_norm)
+        self.update = self.optimizer.apply_gradients(
+            zip(self.gradients, self.trainable_variables))
+
     def _build(self):
         self._build_stem()
-        self.rnn_input = tf.expand_dims(self.stem, 0)
+        # Batch size of 1
+        self.rnn_inputs = tf.expand_dims(self.stem, axis=0)
         self.rnn(self.rnn_inputs)
-        rnn_output = tf.squeeze(self.rnn.outputs, axis=0)
-        self.action_dist = slim.full_connected(
-            rnn_output, self.nb_action, activation_rn=tf.nn.softmax)
-        self.value = slim.full_connected(
-            rnn_output, 1, activation_fn=None)
+        self.rnn_outputs = tf.squeeze(self.rnn.outputs, axis=0)
+        self.action_dist = slim.fully_connected(
+            self.rnn_outputs, self.nb_action, activation_fn=tf.nn.softmax)
+        self.value = slim.fully_connected(
+            self.rnn_outputs, 1, activation_fn=None)
 
-        self.trainable_vars = tf.get_collection(
+        self.trainable_variables = tf.get_collection(
             tf.GraphKeys.TRAINABLE_VARIABLES,
             tf.get_variable_scope().name)
+
+        if self.optimizer is not None:
+            self._build_objective()
 
 
 class Mlp(Network):
 
-    def __init__(self, nb_hidden=[10], *args, **kwargs):
+    def __init__(self, nb_hidden=[10], dropout=0.0, *args, **kwargs):
         self.nb_hidden = nb_hidden
+        self.dropout = dropout
         super(Mlp, self).__init__(*args, **kwargs)
 
     def _build_stem(self):
@@ -58,6 +97,8 @@ class Mlp(Network):
         for nb_hidden in self.nb_hidden:
             layer = slim.fully_connected(layer, nb_hidden,
                                          activation_fn=tf.nn.relu)
+        if self.dropout:
+            layer = slim.dropout(layer, 1 - self.dropout)
         self.stem = layer
         return self.stem
 
@@ -71,10 +112,10 @@ class Cnn(Network):
                  nb_hidden=[512],
                  dropout=0.0,
                  *args, **kwargs):
-        self.nb_kernel = nb_kernel
-        self.kernel_sizes = kernel_sizes
-        self.pool_sizes = pool_sizes
-        self.nb_hidden = nb_hidden
+        self.nb_kernel = to_list(nb_kernel)
+        self.kernel_sizes = to_list(kernel_sizes)
+        self.pool_sizes = to_list(pool_sizes)
+        self.nb_hidden = to_list(nb_hidden)
         self.dropout = dropout
         super(Cnn, self).__init__(*args, **kwargs)
 
