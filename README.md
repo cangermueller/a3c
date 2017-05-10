@@ -1,4 +1,4 @@
-# Deep Q-Networks
+# Asychronous Advantage Actor Critic (A3C)
 
 Reinforcement learning with Advantage Asynchronous Actor Critic (A3C) method.
 
