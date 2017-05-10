@@ -24,6 +24,7 @@ class Network(object):
     def __init__(self, state, nb_action, rnn, optimizer,
                  prepro_state=None,
                  max_grad_norm=5,
+                 entropy_weight=0.001,
                  ):
         self.state = state
         if prepro_state is None:
@@ -34,6 +35,7 @@ class Network(object):
         self.rnn = rnn
         self.optimizer = optimizer
         self.max_grad_norm = max_grad_norm
+        self.entropy_weight = entropy_weight
 
         self._build()
 
@@ -46,23 +48,25 @@ class Network(object):
         self.target_value = tf.placeholder(shape=[None], dtype=tf.float32)
 
         action_onehot = tf.one_hot(self.action, self.nb_action)
-        self.action_selected = tf.reduce_sum(
-            self.action_dist * action_onehot, axis=1)
+        self.log_action_dist = tf.log(self.action_dist + 1e-6)
+        self.log_action_selected = tf.reduce_sum(
+            self.log_action_dist * action_onehot, axis=1)
         # log(pi(q|s)) * (R - V(s))
         self.action_loss = -tf.reduce_mean(
-            tf.log(self.action_selected) * self.advantage)
-        self.entropy = -tf.reduce_mean(tf.reduce_sum(
-            self.action_dist * tf.log(self.action_dist), axis=1))
+            self.log_action_selected * self.advantage)
+        self.entropy = -tf.reduce_mean(self.action_dist * self.log_action_dist)
+        self.entropy_loss = -self.entropy * self.entropy_weight
         # (R - V(s))**2
         self.value_loss = tf.reduce_mean(
             tf.squared_difference(self.target_value, tf.squeeze(self.value)))
-        self.loss = self.action_loss + 0.5 * self.value_loss - \
-            0.01 * self.entropy
+        self.loss = self.action_loss + self.value_loss + self.entropy_loss
         self.gradients = tf.gradients(
             self.loss, self.trainable_variables)
         if self.max_grad_norm:
-            self.gradients, self.global_gradient_norm = \
+            self.gradients, self.global_norm = \
                 tf.clip_by_global_norm(self.gradients, self.max_grad_norm)
+        else:
+            self.global_norm = tf.constant(-1)
         self.update = self.optimizer.apply_gradients(
             zip(self.gradients, self.trainable_variables))
 

@@ -1,3 +1,4 @@
+import os
 import numpy as np
 
 
@@ -16,3 +17,8 @@ def rgb2y(image, scalars=[0.299, 0.587, 0.114]):
     for idx, scalar in enumerate(scalars):
         y += scalar * image[:, :, idx]
     return y
+
+
+def make_dir(path):
+    if not os.path.exists(path):
+        os.makedirs(path)
