@@ -3,14 +3,6 @@ import numpy as np
 from .utils import to_list
 
 
-def running_avg(avg, new, update_rate=0.1):
-    if avg is None:
-        avg = new
-    else:
-        avg = (1 - update_rate) * avg + update_rate * new
-    return avg
-
-
 def discounted_rewards(rewards, discount_factor=0.99):
     disc_rewards = np.zeros_like(rewards)
     reward = 0
@@ -37,13 +29,15 @@ class Agent(object):
 
     def __init__(self, network,
                  global_network=None,
-                 discount=0.99,
+                 gamma=0.99,
+                 lambd=0.0,
                  rollout_len=10,
                  max_steps=10**4,
                  state_fun=None):
         self.network = network
         self.global_network = global_network
-        self.discount = discount
+        self.gamma = gamma
+        self.lambd = lambd
         self.rollout_len = rollout_len
         self.max_steps = max_steps
         self.state_fun = state_fun
@@ -63,12 +57,6 @@ class Agent(object):
         episode = 0
         nb_step_tot = 0
         nb_update = 0
-        reward_avg = None
-        value_avg = None
-        loss_avg = None
-        action_loss_avg = None
-        value_loss_avg = None
-        entropy_avg = None
         action_space = np.arange(self.network.nb_action)
 
         if self.global_network is None:
@@ -90,6 +78,10 @@ class Agent(object):
             state = self._get_state(observation)
             rnn_state = np.zeros([1, self.network.rnn.nb_unit],
                                  dtype=np.float32)
+            if callbacks is not None:
+                logs = {'state': state}
+                for callback in callbacks:
+                    callback.on_episode_start(episode, step, logs=logs)
 
             while not terminal and step < self.max_steps:
                 if stop_fun is not None and stop_fun(episode, step):
@@ -115,6 +107,14 @@ class Agent(object):
                     observation, reward, terminal, info = env.step(action)
                     reward_episode += reward
                     post_state = self._get_state(observation)
+
+                    if callbacks is not None:
+                        logs = {'state': state,
+                                'action': action,
+                                'reward': reward,
+                                'post_state': post_state}
+                        for callback in callbacks:
+                            callback.on_step(episode, step, logs=logs)
 
                     states.append(state)
                     actions.append(action)
@@ -142,10 +142,13 @@ class Agent(object):
                 rewards = np.stack(rewards).ravel()
                 values = np.stack(values).ravel()
 
-                disc_rewards = discounted_rewards(rewards, self.discount)[:-1]
-                advantages = rewards[:-1] + self.discount * values[1:] \
-                    - values[:-1]
+                disc_rewards = discounted_rewards(rewards, self.gamma)[:-1]
                 target_values = disc_rewards
+                # Generalizes advantage estimation
+                td_errors = rewards[:-1] + self.gamma * values[1:] \
+                    - values[:-1]
+                advantages = discounted_rewards(
+                    td_errors, self.gamma * self.lambd)
 
                 loss, action_loss, value_loss, entropy_loss, global_norm, *_ = \
                     sess.run(
@@ -163,25 +166,22 @@ class Agent(object):
                                    self.network.advantage: advantages}
                     )
                 nb_update += 1
-                action_loss_avg = running_avg(action_loss_avg, action_loss)
-                value_loss_avg = running_avg(value_loss_avg, value_loss)
-                entropy_avg = running_avg(entropy_avg, entropy_loss)
-                loss_avg = running_avg(loss_avg, loss)
-                value_avg = running_avg(value_avg, values.mean())
+                logs = {'loss': loss,
+                        'value_loss': value_loss,
+                        'action_loss': action_loss,
+                        'entropy_loss': entropy_loss,
+                        'value': values.mean(),
+                        'global_norm': global_norm}
+                if callbacks is not None:
+                    for callback in callbacks:
+                        callback.on_update(episode, step, logs=logs)
 
-            reward_avg = running_avg(reward_avg, reward_episode)
-            if callbacks:
-                callbacks[0](episode=episode,
-                             nb_step=step,
-                             nb_step_tot=nb_step_tot,
-                             nb_update=nb_update,
-                             reward_episode=reward_episode,
-                             reward_avg=reward_avg,
-                             value_avg=value_avg,
-                             loss_avg=loss_avg,
-                             action_loss_avg=action_loss_avg,
-                             value_loss_avg=value_loss_avg,
-                             entropy_avg=entropy_avg)
+            # Episode end
+            logs = {'reward': reward_episode,
+                    'terminal': terminal}
+            if callbacks is not None:
+                for callback in callbacks:
+                    callback.on_episode_end(episode, step, logs=logs)
 
     def play(self, env, sess, nb_episode=None, stop_fun=None, callbacks=None):
         if nb_episode is None:
@@ -197,7 +197,6 @@ class Agent(object):
             state = self._get_state(observation)
             rnn_state = np.zeros([1, self.network.rnn.nb_unit],
                                  dtype=np.float32)
-
             if callbacks is not None:
                 logs = {'state': state}
                 for callback in callbacks:
@@ -226,6 +225,7 @@ class Agent(object):
                 state = post_state
 
             if callbacks is not None:
-                logs = {'reward': reward_episode}
+                logs = {'reward': reward_episode,
+                        'terminal': terminal}
                 for callback in callbacks:
                     callback.on_episode_end(episode, step, logs=logs)

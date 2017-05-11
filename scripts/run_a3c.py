@@ -99,10 +99,15 @@ class App(object):
             type=float,
             default=0.0001)
         p.add_argument(
-            '--discount',
-            help='Reward discount factors',
+            '--gamma',
+            help='Gamme discount factor',
             type=float,
             default=0.99)
+        p.add_argument(
+            '--lambd',
+            help='Lambda discount factor',
+            type=float,
+            default=0.0)
         p.add_argument(
             '--rollout_len',
             help='Rollout length',
@@ -243,7 +248,7 @@ class App(object):
             env.seed(opts.seed + idx)
             callbacks = None
             if idx == 1:
-                callbacks = self.callback
+                callbacks = cbk.Train()
                 if opts.monitor:
                     os.makedirs(opts.monitor, exist_ok=True)
                     env = Monitor(env, opts.monitor, force=True)
@@ -339,7 +344,8 @@ class App(object):
                 continue
             self.agents[name] = Agent(network=network,
                                       global_network=self.networks['global'],
-                                      discount=opts.discount,
+                                      gamma=opts.gamma,
+                                      lambd=opts.lambd,
                                       rollout_len=opts.rollout_len,
                                       state_fun=state_fun)
 

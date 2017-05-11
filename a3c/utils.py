@@ -22,3 +22,11 @@ def rgb2y(image, scalars=[0.299, 0.587, 0.114]):
 def make_dir(path):
     if not os.path.exists(path):
         os.makedirs(path)
+
+
+def running_avg(avg, new, update_rate=0.1):
+    if avg is None:
+        avg = new
+    else:
+        avg = (1 - update_rate) * avg + update_rate * new
+    return avg
