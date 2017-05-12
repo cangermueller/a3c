@@ -1,3 +1,6 @@
+import numpy as np
+import tensorflow as tf
+
 from .utils import running_avg
 
 
@@ -22,6 +25,47 @@ class Callback(object):
 
     def on_episode_end(self, episode, step, logs=None):
         pass
+
+
+class Tensorboard(Callback):
+
+    def __init__(self, sess, summary_writer, *args, **kwargs):
+        self.sess = sess
+        self.summary_writer = summary_writer
+
+        self.episode_metrics = ['reward']
+        self.update_metrics = ['loss', 'action_loss', 'value_loss',
+                               'entropy_loss', 'value', 'global_norm']
+        self.scalars = dict()
+        for name in self.episode_metrics + self.update_metrics:
+            self.scalars[name] = tf.placeholder(shape=(), dtype=tf.float32)
+        self.summaries = []
+        for name, op in self.scalars.items():
+            self.summaries.append(tf.summary.scalar(name, op))
+        self.merged_summaries = tf.summary.merge(self.summaries)
+
+        super(Tensorboard, self).__init__(*args, **kwargs)
+
+    def on_episode_start(self, episode, step, logs=None):
+        self.avgs = dict()
+        for name in self.update_metrics:
+            self.avgs[name] = []
+
+    def on_update(self, episode, step, logs=None):
+        for name in self.update_metrics:
+            self.avgs[name].append(logs[name])
+
+    def on_episode_end(self, episode, step, logs=None):
+        values = dict()
+        for name in self.episode_metrics:
+            values[name] = logs[name]
+        for name, value in self.avgs.items():
+            values[name] = np.mean(value)
+        feed_dict = dict()
+        for name, op in self.scalars.items():
+            feed_dict[op] = values[name]
+        summaries = self.sess.run(self.merged_summaries, feed_dict=feed_dict)
+        self.summary_writer.add_summary(summaries, episode)
 
 
 class Train(Callback):

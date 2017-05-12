@@ -52,16 +52,23 @@ class App(object):
         p = argparse.ArgumentParser(
             prog=name,
             formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-            description='Asynchronous Actor Critic RL')
+            description='Advantage Asynchronous Actor Critic (A3C)')
         p.add_argument(
             '--env',
             help='Environment',
             default='FrozenLake-v0')
+        p.add_argument(
+            '--nb_train',
+            help='Number of episodes',
+            type=int,
+            default=100)
+        p.add_argument(
+            '--nb_play',
+            help='Number of episodes to play',
+            type=int,
+            default=0)
 
         # IO options
-        p.add_argument(
-            '-o', '--out_dir',
-            help='Output directory')
         p.add_argument(
             '--in_checkpoint',
             help='Input checkpoint path')
@@ -75,17 +82,10 @@ class App(object):
             default=1000)
         p.add_argument(
             '--monitor',
-            help='Output directory of gym monitor')
+            help='Gym monitor output directory')
         p.add_argument(
-            '--nb_train',
-            help='Number of episodes',
-            type=int,
-            default=100)
-        p.add_argument(
-            '--nb_play',
-            help='Number of episodes to play',
-            type=int,
-            default=0)
+            '--tensorboard',
+            help='Tensorboard output directory')
 
         # Learning parameters
         p.add_argument(
@@ -175,34 +175,6 @@ class App(object):
 
         return p
 
-    def callback(self, episode, nb_step, nb_step_tot, nb_update,
-                 reward_episode, reward_avg, value_avg, loss_avg,
-                 action_loss_avg, value_loss_avg, entropy_avg,
-                 *args, **kwargs):
-
-        if episode % self.opts.save_freq == 0:
-            self.save_graph()
-
-        def format_na(x, spec):
-            if x is None:
-                return 'NA'
-            else:
-                return '{:{spec}}'.format(x, spec=spec)
-
-        tmp = ['episode=%d' % episode,
-               'steps=%d' % nb_step,
-               'steps_tot=%d' % nb_step_tot,
-               'updates=%d' % nb_update,
-               'r_epi=%.2f' % reward_episode,
-               'r_avg=%s' % format_na(reward_avg, '.2f'),
-               'v_avg=%s' % format_na(value_avg, '.2f'),
-               'l_avg=%s' % format_na(loss_avg, '.4f'),
-               'al_avg=%s' % format_na(action_loss_avg, '.4f'),
-               'vl_avg=%s' % format_na(value_loss_avg, '.4f'),
-               'e_avg=%s' % format_na(entropy_avg, '.4f')]
-        tmp = '  '.join(tmp)
-        print(tmp)
-
     def save_graph(self):
         out_path = self.opts.out_checkpoint
         if not out_path:
@@ -247,11 +219,18 @@ class App(object):
             env = gym.make(opts.env)
             env.seed(opts.seed + idx)
             callbacks = None
+            writer = None
             if idx == 1:
-                callbacks = cbk.Train()
+                callbacks = []
+                callbacks.append(cbk.Train())
                 if opts.monitor:
-                    os.makedirs(opts.monitor, exist_ok=True)
+                    make_dir(opts.monitor)
                     env = Monitor(env, opts.monitor, force=True)
+                if opts.tensorboard:
+                    make_dir(opts.tensorboard)
+                    writer = tf.summary.FileWriter(opts.tensorboard)
+                    writer.add_graph(self.graph)
+                    callbacks.append(cbk.Tensorboard(self.sess, writer))
 
             def thread_fun(graph=tf.get_default_graph()):
                 with graph.as_default():
@@ -259,6 +238,7 @@ class App(object):
                                 nb_episode=opts.nb_train,
                                 stop_fun=stop_fun,
                                 callbacks=callbacks)
+                    writer.close()
 
             thread = threading.Thread(target=thread_fun)
             thread.start()
@@ -349,6 +329,7 @@ class App(object):
                                       rollout_len=opts.rollout_len,
                                       state_fun=state_fun)
 
+        self.graph = tf.get_default_graph()
         self.sess = tf.Session()
 
         # Load or initialize network variables
