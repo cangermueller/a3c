@@ -15,5 +15,11 @@ setup(name='a3c',
       author_email='cangermueller@gmail.com',
       license="MIT",
       packages=find_packages(),
-      scripts=glob('./scripts/*.py')
+      scripts=glob('./scripts/*.py'),
+      install_requires=['argparse',
+                        'logging',
+                        'numpy',
+                        'pytest',
+                        'tensorflow',
+                        'gym']
       )
