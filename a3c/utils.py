@@ -1,5 +1,6 @@
 import os
 import numpy as np
+import tensorflow as tf
 
 
 def to_list(value):
@@ -30,3 +31,10 @@ def running_avg(avg, new, update_rate=0.1):
     else:
         avg = (1 - update_rate) * avg + update_rate * new
     return avg
+
+
+def huber_loss(delta, offset=0.5):
+    delta = tf.abs(delta)
+    return tf.where(delta < 1.0,
+                    offset * tf.square(delta),
+                    delta - offset)

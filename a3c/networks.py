@@ -2,7 +2,7 @@ import tensorflow as tf
 from tensorflow.contrib import rnn
 from tensorflow.contrib import slim
 
-from .utils import to_list
+from .utils import to_list, huber_loss
 
 
 class Rnn(object):
@@ -25,6 +25,7 @@ class Network(object):
                  prepro_state=None,
                  max_grad_norm=5,
                  entropy_weight=0.001,
+                 huber_loss=False,
                  ):
         self.state = state
         if prepro_state is None:
@@ -36,6 +37,7 @@ class Network(object):
         self.optimizer = optimizer
         self.max_grad_norm = max_grad_norm
         self.entropy_weight = entropy_weight
+        self.huber_loss = huber_loss
 
         self._build()
 
@@ -57,8 +59,12 @@ class Network(object):
         self.entropy = -tf.reduce_mean(self.action_dist * self.log_action_dist)
         self.entropy_loss = -self.entropy * self.entropy_weight
         # (R - V(s))**2
-        self.value_loss = tf.reduce_mean(
-            tf.squared_difference(self.target_value, tf.squeeze(self.value)))
+        delta = self.target_value - tf.squeeze(self.value)
+        if self.huber_loss:
+            self.value_loss = huber_loss(delta)
+        else:
+            self.value_loss = tf.square(delta)
+        self.value_loss = tf.reduce_mean(self.value_loss)
         self.loss = self.action_loss + self.value_loss + self.entropy_loss
         self.gradients = tf.gradients(
             self.loss, self.trainable_variables)

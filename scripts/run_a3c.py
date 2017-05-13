@@ -122,6 +122,10 @@ class App(object):
             help='Weight of entropy loss',
             type=float,
             default=0.0)
+        p.add_argument(
+            '--huber_loss',
+            help='Use Huber instead of square regression loss',
+            action='store_true')
 
         # Network architecture
         p.add_argument(
