@@ -36,4 +36,4 @@ docs/build/*
 /venv*/
 MANIFEST
 
-/dev/
+/examples/*/results
